@@ -67,6 +67,12 @@ jobs:
       matrix:
         url: ${{ fromJSON(needs.prepare.outputs.urls) }}
 
+              - name: Install Playwright + browsers
+        run: |
+          pip install playwright
+          python -m playwright install --with-deps chromium
+
+
     steps:
       - uses: actions/checkout@v4
 
