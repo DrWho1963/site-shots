@@ -78,25 +78,24 @@ jobs:
         run: |
           pip install playwright
           python -m playwright install --with-deps chromium
-          
-   - name: Screenshot to JPEG
-     env:
-       SHOT_URLS: ${{ matrix.url }}   # one URL per job
-     shell: bash
-     run: |
-       set -e
-       mkdir -p shots
-       python scripts/daily_screenshot.py
-       shopt -s nullglob
-       files=(shots/*.jpg shots/*.jpeg)
-       if [ ${#files[@]} -eq 0 ]; then
-         echo "No JPEG found in ./shots after script ran."
-         echo "SKIP_EMAIL=true" >> "$GITHUB_ENV"
-       else
-         echo "SHOT_FILE=${files[0]}" >> "$GITHUB_ENV"
-         echo "Using file: ${files[0]}"
-       fi
 
+      - name: Screenshot to JPEG
+        env:
+          SHOT_URLS: ${{ matrix.url }}   # one URL per job
+        shell: bash
+        run: |
+          set -e
+          mkdir -p shots
+          python scripts/daily_screenshot.py
+          shopt -s nullglob
+          files=(shots/*.jpg shots/*.jpeg)
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "No JPEG found in ./shots after script ran."
+            echo "SKIP_EMAIL=true" >> "$GITHUB_ENV"
+          else
+            echo "SHOT_FILE=${files[0]}" >> "$GITHUB_ENV"
+            echo "Using file: ${files[0]}"
+          fi
 
       - name: Email inline JPEG
         if: ${{ env.SKIP_EMAIL != 'true' }}
