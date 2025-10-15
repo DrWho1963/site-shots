@@ -1,0 +1,68 @@
+name: Daily Site Screenshots (Email)
+
+on:
+  schedule:
+    - cron: "5 11 * * *"   # 11:05 UTC ≈ 7:05am New York; adjust if you want
+  workflow_dispatch: {}
+
+jobs:
+  shoot-and-email:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Playwright + browsers
+        run: |
+          pip install playwright
+          python -m playwright install --with-deps chromium
+
+      - name: Run screenshots
+        env:
+          SHOT_URLS: ${{ secrets.SHOT_URLS }}   # optional; otherwise uses urls.json
+        run: |
+          python scripts/daily_screenshot.py
+
+      - name: Convert PNG -> JPG (quality 80)
+        run: |
+          sudo apt-get update && sudo apt-get install -y imagemagick
+          mkdir -p shots_jpg
+          mogrify -format jpg -quality 80 -path shots_jpg shots/*.png
+          ls -lh shots_jpg || true
+
+      - name: Upload screenshots as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: screenshots-${{ github.run_id }}
+          path: |
+            shots/*.png
+            shots_jpg/*.jpg
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Send email with attachments
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: ${{ secrets.SMTP_SERVER }}
+          server_port: ${{ secrets.SMTP_PORT }}
+          username: ${{ secrets.SMTP_USERNAME }}
+          password: ${{ secrets.SMTP_PASSWORD }}
+          secure: true
+          subject: "Daily Screenshots - ${{ github.repository }} - ${{ github.run_id }}"
+          from: ${{ secrets.FROM_EMAIL }}
+          to: ${{ secrets.TO_EMAIL }}
+          attachments: |
+            shots_jpg/*.jpg
+            shots/*.png
+          html_body: |
+            <p>Hi Darren,</p>
+            <p>Attached are today’s screenshots.</p>
+            <ul>
+              <li>Run ID: ${{ github.run_id }}</li>
+              <li>Time (UTC): ${{ github.run_started_at }}</li>
+            </ul>
+            <p>— GitHub Actions</p>
