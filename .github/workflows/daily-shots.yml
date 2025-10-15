@@ -15,9 +15,7 @@ jobs:
 
       - id: collect
         env:
-          # Optional: comma-separated override via secret (first priority)
-          SHOT_URLS: ${{ secrets.SHOT_URLS }}
-          # Default list; used if secret is empty, or merged (no dupes) if secret present
+          SHOT_URLS: ${{ secrets.SHOT_URLS }}  # optional, comma-separated
           DEFAULT_URLS: |
             [
               "https://www.mayspaving.com/",
@@ -42,8 +40,7 @@ jobs:
         run: |
           set -euo pipefail
           sudo apt-get update -y && sudo apt-get install -y jq
-
-          # Build urls.json from secret + defaults (unique, in that order)
+          # Build list from secret + defaults (unique, secret first)
           jq -cn --arg secret "${SHOT_URLS:-}" --argjson defaults "${DEFAULT_URLS}" '
             ( if ($secret|length)>0
               then ($secret
@@ -52,12 +49,8 @@ jobs:
                     | map(select(length>0)))
               else [] end ) as $s
             | ($s + ( $defaults - $s ))' > urls.json
-
-          echo "Built URL list:"
-          cat urls.json
-
-          # Pass list to next job as a compact JSON string
           echo "urls=$(jq -c . urls.json)" >> "$GITHUB_OUTPUT"
+          echo "Built URLs:" && cat urls.json
 
   shoot_and_email:
     needs: prepare
@@ -75,6 +68,7 @@ jobs:
           python-version: "3.11"
 
       - name: Install Playwright + browsers
+        shell: bash
         run: |
           pip install playwright
           python -m playwright install --with-deps chromium
