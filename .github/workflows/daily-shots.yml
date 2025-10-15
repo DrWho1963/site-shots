@@ -3,7 +3,7 @@ name: Daily Site Screenshots (One Email per URL)
 on:
   workflow_dispatch:
   schedule:
-    - cron: "0 11 * * *"  # ~7:00 AM US Eastern; adjust later if needed
+    - cron: "0 11 * * *"  # ~7:00 AM US Eastern
 
 jobs:
   prepare:
@@ -39,6 +39,7 @@ PY
 
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
@@ -87,7 +88,8 @@ shot=os.environ["SHOT_FILE"]
 
 msg=MIMEMultipart('related')
 msg['Subject']=f"[Site Screenshot] {url}"
-msg['From']=frm; msg['To']=to
+msg['From']=frm
+msg['To']=to
 
 alt=MIMEMultipart('alternative')
 alt.attach(MIMEText("Inline screenshot (HTML)", "plain"))
@@ -103,9 +105,12 @@ msg.attach(img)
 ctx=ssl.create_default_context()
 if port==465:
     with smtplib.SMTP_SSL(server, port, context=ctx) as s:
-        s.login(user, pw); s.sendmail(frm, [to], msg.as_string())
+        s.login(user, pw)
+        s.sendmail(frm, [to], msg.as_string())
 else:
     with smtplib.SMTP(server, port) as s:
-        s.starttls(context=ctx); s.login(user, pw); s.sendmail(frm, [to], msg.as_string())
+        s.starttls(context=ctx)
+        s.login(user, pw)
+        s.sendmail(frm, [to], msg.as_string())
 print(f"Sent inline screenshot for {url} -> {to}")
 PY
