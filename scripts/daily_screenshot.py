@@ -15,18 +15,16 @@ os.makedirs(OUT_DIR, exist_ok=True)
 ts = datetime.utcnow().strftime("%Y-%m-%d_%H%M%S-UTC")
 
 def safe(u):
-    return u.replace("https://", "").replace("http://", "").replace("/", "_")
+    return u.replace("https://","").replace("http://","").replace("/","_")
 
 with sync_playwright() as p:
     browser = p.chromium.launch()
-    # Fixed viewport to keep files small
-    context = browser.new_context(viewport={"width": 1440, "height": 900})
+    context = browser.new_context(viewport={"width":1440, "height":900})
     page = context.new_page()
     for u in URLS:
         try:
             page.goto(u, wait_until="networkidle", timeout=60_000)
             page.wait_for_timeout(1000)
-            # ONE file per run; JPEG, not full_page
             fname = f"{OUT_DIR}/{safe(u)}__{ts}.jpg"
             page.screenshot(path=fname, type="jpeg", quality=75, full_page=False)
             print("Saved", fname)
