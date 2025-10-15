@@ -3,7 +3,7 @@ name: Daily Site Screenshots (One Email per URL)
 on:
   workflow_dispatch:
   schedule:
-    - cron: "0 11 * * *"  # ~7:00 AM US Eastern
+    - cron: "0 11 * * *"  # ~7:00 AM US Eastern; change later if you want
 
 jobs:
   prepare:
@@ -13,6 +13,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Build JSON array of URLs from secret SHOT_URLS (comma-separated).
+      # If SHOT_URLS isn't set, it will use urls.json from the repo.
       - id: collect
         env:
           SHOT_URLS: ${{ secrets.SHOT_URLS }}
@@ -49,17 +51,27 @@ PY
           pip install playwright
           python -m playwright install --with-deps chromium
 
+      # Take ONE small JPEG for this URL
       - name: Screenshot to JPEG
         env:
           SHOT_URLS: ${{ matrix.url }}
         shell: bash
         run: |
+          set -e
           python scripts/daily_screenshot.py
-          file="$(ls -1 shots/*.jpg | head -n1)"
-          echo "SHOT_FILE=$file" >> "$GITHUB_ENV"
-          echo "Using file: $file"
+          shopt -s nullglob
+          files=(shots/*.jpg)
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "No screenshot produced; will skip email."
+            echo "SKIP_EMAIL=true" >> "$GITHUB_ENV"
+          else
+            echo "SHOT_FILE=${files[0]}" >> "$GITHUB_ENV"
+            echo "Using file: ${files[0]}"
+          fi
 
+      # Send email with the image INLINE (CID) — only if we have a file
       - name: Email inline JPEG
+        if: env.SKIP_EMAIL != 'true'
         env:
           SMTP_SERVER: ${{ secrets.SMTP_SERVER }}
           SMTP_PORT: ${{ secrets.SMTP_PORT }}
@@ -92,8 +104,12 @@ msg['From']=frm
 msg['To']=to
 
 alt=MIMEMultipart('alternative')
-alt.attach(MIMEText("Inline screenshot (HTML)", "plain"))
-alt.attach(MIMEText(f"<p>Today's screenshot for <b>{url}</b>:</p><img src='cid:screenshot' style='max-width:100%;height:auto;'/>", "html"))
+alt.attach(MIMEText("Inline screenshot (HTML).", "plain"))
+alt.attach(MIMEText(
+    f"<p>Today's screenshot for <b>{url}</b>:</p>"
+    f"<img src='cid:screenshot' style='max-width:100%;height:auto;'/>",
+    "html"
+))
 msg.attach(alt)
 
 with open(shot, "rb") as f:
@@ -112,5 +128,5 @@ else:
         s.starttls(context=ctx)
         s.login(user, pw)
         s.sendmail(frm, [to], msg.as_string())
-print(f"Sent inline screenshot for {url} -> {to}")
+print(f"Sent inline screenshot for {url} -> {to} ({shot})")
 PY
