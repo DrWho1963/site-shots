@@ -2,7 +2,7 @@ name: Daily Site Screenshots (One email per URL)
 
 on:
   schedule:
-    - cron: "5 11 * * *"
+    - cron: "5 11 * * *"   # 11:05 UTC ≈ 7:05am ET
   workflow_dispatch: {}
 
 jobs:
@@ -12,14 +12,24 @@ jobs:
       urls: ${{ steps.collect.outputs.urls }}
     steps:
       - uses: actions/checkout@v4
+
+      # Build JSON array of URLs from secret SHOT_URLS (comma-separated) or urls.json
       - id: collect
+        env:
+          SHOT_URLS: ${{ secrets.SHOT_URLS }}
         run: |
-          if [ -n "${{ secrets.SHOT_URLS }}" ]; then
-            RAW="${{ secrets.SHOT_URLS }}"
-            echo "urls=$(printf '%s' "$RAW" | awk -v RS=, 'NF{gsub(/^[ \t]+|[ \t]+$/,""); printf "%s\"%s\"", (NR==1?"[":","), $0} END{print "]"}')" >> $GITHUB_OUTPUT
+          if [ -n "$SHOT_URLS" ]; then
+            json=$(python - <<'PY'
+import os, json
+raw = os.environ.get("SHOT_URLS","")
+urls = [u.strip() for u in raw.split(",") if u.strip()]
+print(json.dumps(urls))
+PY
+)
+            echo "urls=$json" >> "$GITHUB_OUTPUT"
           else
-            sudo apt-get update && sudo apt-get install -y jq
-            echo "urls=$(jq -c . urls.json)" >> $GITHUB_OUTPUT
+            sudo apt-get update -y && sudo apt-get install -y jq
+            echo "urls=$(jq -c . urls.json)" >> "$GITHUB_OUTPUT"
           fi
 
   shoot_and_email:
@@ -29,6 +39,7 @@ jobs:
       fail-fast: false
       matrix:
         url: ${{ fromJSON(needs.prepare.outputs.urls) }}
+
     steps:
       - uses: actions/checkout@v4
 
@@ -41,17 +52,18 @@ jobs:
           pip install playwright
           python -m playwright install --with-deps chromium
 
-      - name: Screenshot one URL to JPEG
+      # Take ONE small JPEG screenshot for this URL
+      - name: Screenshot to JPEG
         env:
           SHOT_URLS: ${{ matrix.url }}
         run: |
           python scripts/daily_screenshot.py
-          # pick the single file we just created and expose it as SHOT_FILE
-          f=$(ls -1 shots/*.jpg | head -n1)
-          echo "SHOT_FILE=$f" >> $GITHUB_ENV
-          echo "Using file: $f"
+          file="$(ls -1 shots/*.jpg | head -n1)"
+          echo "SHOT_FILE=$file" >> "$GITHUB_ENV"
+          echo "Using file: $file"
 
-         - name: Email this URL's screenshot inline (CID)
+      # Send email with image INLINE (CID)
+      - name: Email inline JPEG
         env:
           SMTP_SERVER: ${{ secrets.SMTP_SERVER }}
           SMTP_PORT: ${{ secrets.SMTP_PORT }}
@@ -60,61 +72,56 @@ jobs:
           FROM_EMAIL: ${{ secrets.FROM_EMAIL }}
           TO_EMAIL: ${{ secrets.TO_EMAIL }}
           URL_UNDER_TEST: ${{ matrix.url }}
+          SHOT_FILE: ${{ env.SHOT_FILE }}
         run: |
           python - <<'PY'
-          import os, smtplib, ssl
-          from email.mime.multipart import MIMEMultipart
-          from email.mime.text import MIMEText
-          from email.mime.image import MIMEImage
+import os, smtplib, ssl
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+from email.mime.image import MIMEImage
 
-          server = os.environ["SMTP_SERVER"]
-          port = int(os.environ["SMTP_PORT"])
-          user = os.environ["SMTP_USERNAME"]
-          password = os.environ["SMTP_PASSWORD"]
-          from_addr = os.environ["FROM_EMAIL"]
-          to_addr = os.environ["TO_EMAIL"]
-          url = os.environ["URL_UNDER_TEST"]
-          shot_file = os.environ.get("SHOT_FILE")
+server = os.environ["SMTP_SERVER"]
+port = int(os.environ["SMTP_PORT"])
+user = os.environ["SMTP_USERNAME"]
+password = os.environ["SMTP_PASSWORD"]
+from_addr = os.environ["FROM_EMAIL"]
+to_addr = os.environ["TO_EMAIL"]
+url = os.environ["URL_UNDER_TEST"]
+shot_file = os.environ["SHOT_FILE"]
 
-          # Build a multipart/related email: HTML + inline image
-          msg = MIMEMultipart('related')
-          msg['Subject'] = f"[Site Screenshot] {url}"
-          msg['From'] = from_addr
-          msg['To'] = to_addr
+msg = MIMEMultipart('related')
+msg['Subject'] = f"[Site Screenshot] {url}"
+msg['From'] = from_addr
+msg['To'] = to_addr
 
-          # HTML part references the image by Content-ID
-          html = f"""
-          <html>
-            <body>
-              <p>Hi Darren,</p>
-              <p>Today's screenshot for <b>{url}</b>:</p>
-              <p><img src="cid:screenshot" style="max-width:100%; height:auto;"/></p>
-              <p>— GitHub Actions</p>
-            </body>
-          </html>
-          """
-          alt = MIMEMultipart('alternative')
-          alt.attach(MIMEText("Today's screenshot is embedded (use an HTML-capable client).", 'plain'))
-          alt.attach(MIMEText(html, 'html'))
-          msg.attach(alt)
+html = f"""
+<html><body>
+<p>Hi Darren,</p>
+<p>Today's screenshot for <b>{url}</b>:</p>
+<p><img src="cid:screenshot" style="max-width:100%;height:auto;"/></p>
+<p>— GitHub Actions</p>
+</body></html>
+"""
+alt = MIMEMultipart('alternative')
+alt.attach(MIMEText("Inline screenshot attached (HTML).", 'plain'))
+alt.attach(MIMEText(html, 'html'))
+msg.attach(alt)
 
-          # Attach image inline
-          with open(shot_file, 'rb') as f:
-              img = MIMEImage(f.read())
-          img.add_header('Content-ID', '<screenshot>')   # must be in angle brackets
-          img.add_header('Content-Disposition', 'inline', filename=os.path.basename(shot_file))
-          msg.attach(img)
+with open(shot_file, 'rb') as f:
+    img = MIMEImage(f.read())
+img.add_header('Content-ID', '<screenshot>')
+img.add_header('Content-Disposition', 'inline', filename=os.path.basename(shot_file))
+msg.attach(img)
 
-          # Send via SMTPS (SSL on 465) or STARTTLS if you're using 587
-          context = ssl.create_default_context()
-          if port == 465:
-              with smtplib.SMTP_SSL(server, port, context=context) as s:
-                  s.login(user, password)
-                  s.sendmail(from_addr, [to_addr], msg.as_string())
-          else:
-              with smtplib.SMTP(server, port) as s:
-                  s.starttls(context=context)
-                  s.login(user, password)
-                  s.sendmail(from_addr, [to_addr], msg.as_string())
-          print(f"Sent inline screenshot email to {to_addr} for {url} with file {shot_file}")
-          PY
+ctx = ssl.create_default_context()
+if port == 465:
+    with smtplib.SMTP_SSL(server, port, context=ctx) as s:
+        s.login(user, password)
+        s.sendmail(from_addr, [to_addr], msg.as_string())
+else:
+    with smtplib.SMTP(server, port) as s:
+        s.starttls(context=ctx)
+        s.login(user, password)
+        s.sendmail(from_addr, [to_addr], msg.as_string())
+print(f"Sent inline screenshot for {url} from {from_addr} to {to_addr}: {shot_file}")
+PY
