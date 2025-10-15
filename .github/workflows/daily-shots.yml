@@ -1,10 +1,46 @@
-name: Smoke Test
+name: Email Inline Test
 
 on:
   workflow_dispatch:
 
 jobs:
-  ok:
+  email:
     runs-on: ubuntu-latest
     steps:
-      - run: echo "Actions is alive ✅"
+      - name: Send inline email via Gmail
+        env:
+          SMTP_SERVER: ${{ secrets.SMTP_SERVER }}
+          SMTP_PORT: ${{ secrets.SMTP_PORT }}
+          SMTP_USERNAME: ${{ secrets.SMTP_USERNAME }}
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+          FROM_EMAIL: ${{ secrets.FROM_EMAIL }}
+          TO_EMAIL: ${{ secrets.TO_EMAIL }}
+        run: |
+          python - <<'PY'
+          import os, smtplib, ssl
+          from email.mime.multipart import MIMEMultipart
+          from email.mime.text import MIMEText
+
+          server=os.environ["SMTP_SERVER"]
+          port=int(os.environ["SMTP_PORT"])
+          user=os.environ["SMTP_USERNAME"]
+          pw=os.environ["SMTP_PASSWORD"]
+          frm=os.environ["FROM_EMAIL"]
+          to=os.environ["TO_EMAIL"]
+
+          msg=MIMEMultipart('alternative')
+          msg['Subject']="Inline test email"
+          msg['From']=frm
+          msg['To']=to
+          msg.attach(MIMEText("Plaintext fallback", "plain"))
+          msg.attach(MIMEText("<h3>Inline test ✅</h3><p>No images yet.</p>", "html"))
+
+          ctx=ssl.create_default_context()
+          if port==465:
+              with smtplib.SMTP_SSL(server, port, context=ctx) as s:
+                  s.login(user, pw); s.sendmail(frm, [to], msg.as_string())
+          else:
+              with smtplib.SMTP(server, port) as s:
+                  s.starttls(context=ctx); s.login(user, pw); s.sendmail(frm, [to], msg.as_string())
+          print("Sent.")
+          PY
