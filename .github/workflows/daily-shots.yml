@@ -1,13 +1,64 @@
-name: Email Inline Test
+name: Daily Site Screenshots (One Email per URL)
 
 on:
   workflow_dispatch:
+  schedule:
+    - cron: "0 11 * * *"  # ~7:00 AM US Eastern; adjust later if needed
 
 jobs:
-  email:
+  prepare:
     runs-on: ubuntu-latest
+    outputs:
+      urls: ${{ steps.collect.outputs.urls }}
     steps:
-      - name: Send inline email via Gmail
+      - uses: actions/checkout@v4
+
+      - id: collect
+        env:
+          SHOT_URLS: ${{ secrets.SHOT_URLS }}
+        shell: bash
+        run: |
+          sudo apt-get update -y && sudo apt-get install -y jq
+          if [ -n "$SHOT_URLS" ]; then
+            python - <<'PY' > urls.json
+import os, json
+raw = os.environ.get("SHOT_URLS","")
+urls = [u.strip() for u in raw.split(",") if u.strip()]
+print(json.dumps(urls))
+PY
+          fi
+          echo "urls=$(jq -c . urls.json)" >> "$GITHUB_OUTPUT"
+
+  shoot_and_email:
+    needs: prepare
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        url: ${{ fromJSON(needs.prepare.outputs.urls) }}
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Playwright + browsers
+        run: |
+          pip install playwright
+          python -m playwright install --with-deps chromium
+
+      - name: Screenshot to JPEG
+        env:
+          SHOT_URLS: ${{ matrix.url }}
+        shell: bash
+        run: |
+          python scripts/daily_screenshot.py
+          file="$(ls -1 shots/*.jpg | head -n1)"
+          echo "SHOT_FILE=$file" >> "$GITHUB_ENV"
+          echo "Using file: $file"
+
+      - name: Email inline JPEG
         env:
           SMTP_SERVER: ${{ secrets.SMTP_SERVER }}
           SMTP_PORT: ${{ secrets.SMTP_PORT }}
@@ -15,32 +66,46 @@ jobs:
           SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
           FROM_EMAIL: ${{ secrets.FROM_EMAIL }}
           TO_EMAIL: ${{ secrets.TO_EMAIL }}
+          URL_UNDER_TEST: ${{ matrix.url }}
+          SHOT_FILE: ${{ env.SHOT_FILE }}
+        shell: bash
         run: |
           python - <<'PY'
-          import os, smtplib, ssl
-          from email.mime.multipart import MIMEMultipart
-          from email.mime.text import MIMEText
+import os, smtplib, ssl
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+from email.mime.image import MIMEImage
 
-          server=os.environ["SMTP_SERVER"]
-          port=int(os.environ["SMTP_PORT"])
-          user=os.environ["SMTP_USERNAME"]
-          pw=os.environ["SMTP_PASSWORD"]
-          frm=os.environ["FROM_EMAIL"]
-          to=os.environ["TO_EMAIL"]
+server=os.environ["SMTP_SERVER"]
+port=int(os.environ["SMTP_PORT"])
+user=os.environ["SMTP_USERNAME"]
+pw=os.environ["SMTP_PASSWORD"]
+frm=os.environ["FROM_EMAIL"]
+to=os.environ["TO_EMAIL"]
+url=os.environ["URL_UNDER_TEST"]
+shot=os.environ["SHOT_FILE"]
 
-          msg=MIMEMultipart('alternative')
-          msg['Subject']="Inline test email"
-          msg['From']=frm
-          msg['To']=to
-          msg.attach(MIMEText("Plaintext fallback", "plain"))
-          msg.attach(MIMEText("<h3>Inline test ✅</h3><p>No images yet.</p>", "html"))
+msg=MIMEMultipart('related')
+msg['Subject']=f"[Site Screenshot] {url}"
+msg['From']=frm; msg['To']=to
 
-          ctx=ssl.create_default_context()
-          if port==465:
-              with smtplib.SMTP_SSL(server, port, context=ctx) as s:
-                  s.login(user, pw); s.sendmail(frm, [to], msg.as_string())
-          else:
-              with smtplib.SMTP(server, port) as s:
-                  s.starttls(context=ctx); s.login(user, pw); s.sendmail(frm, [to], msg.as_string())
-          print("Sent.")
-          PY
+alt=MIMEMultipart('alternative')
+alt.attach(MIMEText("Inline screenshot (HTML)", "plain"))
+alt.attach(MIMEText(f"<p>Today's screenshot for <b>{url}</b>:</p><img src='cid:screenshot' style='max-width:100%;height:auto;'/>", "html"))
+msg.attach(alt)
+
+with open(shot, "rb") as f:
+    img=MIMEImage(f.read())
+img.add_header('Content-ID','<screenshot>')
+img.add_header('Content-Disposition','inline', filename=os.path.basename(shot))
+msg.attach(img)
+
+ctx=ssl.create_default_context()
+if port==465:
+    with smtplib.SMTP_SSL(server, port, context=ctx) as s:
+        s.login(user, pw); s.sendmail(frm, [to], msg.as_string())
+else:
+    with smtplib.SMTP(server, port) as s:
+        s.starttls(context=ctx); s.login(user, pw); s.sendmail(frm, [to], msg.as_string())
+print(f"Sent inline screenshot for {url} -> {to}")
+PY
