@@ -36,7 +36,8 @@ jobs:
             "https://www.greenspage.com/"
           ]
           JSON
-          echo "urls=$(cat urls.json)" >> "$GITHUB_OUTPUT"
+          # IMPORTANT: make it one line for fromJSON()
+          echo "urls=$(jq -c . urls.json)" >> "$GITHUB_OUTPUT"
 
   shoot_and_email:
     needs: prepare
@@ -57,6 +58,8 @@ jobs:
         run: |
           pip install playwright
           python -m playwright install --with-deps chromium
+
+          echo "URL under test: $SHOT_URLS"
 
       - name: Screenshot to JPEG
         env:
