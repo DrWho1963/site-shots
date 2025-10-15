@@ -51,19 +51,70 @@ jobs:
           echo "SHOT_FILE=$f" >> $GITHUB_ENV
           echo "Using file: $f"
 
-      - name: Send email with this one attachment
-        uses: dawidd6/action-send-mail@v3
-        with:
-          server_address: ${{ secrets.SMTP_SERVER }}
-          server_port: ${{ secrets.SMTP_PORT }}
-          username: ${{ secrets.SMTP_USERNAME }}
-          password: ${{ secrets.SMTP_PASSWORD }}
-          secure: true
-          from: ${{ secrets.FROM_EMAIL }}
-          to: ${{ secrets.TO_EMAIL }}
-          subject: "[Site Screenshot] ${{ matrix.url }} - ${{ github.run_id }}"
-          html_body: |
-            <p>Hi Darren,</p>
-            <p>Today's screenshot for <b>${{ matrix.url }}</b> is attached.</p>
-            <p>Run: ${{ github.run_id }} • UTC: ${{ github.run_started_at }}</p>
-          attachments: ${{ env.SHOT_FILE }}
+         - name: Email this URL's screenshot inline (CID)
+        env:
+          SMTP_SERVER: ${{ secrets.SMTP_SERVER }}
+          SMTP_PORT: ${{ secrets.SMTP_PORT }}
+          SMTP_USERNAME: ${{ secrets.SMTP_USERNAME }}
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+          FROM_EMAIL: ${{ secrets.FROM_EMAIL }}
+          TO_EMAIL: ${{ secrets.TO_EMAIL }}
+          URL_UNDER_TEST: ${{ matrix.url }}
+        run: |
+          python - <<'PY'
+          import os, smtplib, ssl
+          from email.mime.multipart import MIMEMultipart
+          from email.mime.text import MIMEText
+          from email.mime.image import MIMEImage
+
+          server = os.environ["SMTP_SERVER"]
+          port = int(os.environ["SMTP_PORT"])
+          user = os.environ["SMTP_USERNAME"]
+          password = os.environ["SMTP_PASSWORD"]
+          from_addr = os.environ["FROM_EMAIL"]
+          to_addr = os.environ["TO_EMAIL"]
+          url = os.environ["URL_UNDER_TEST"]
+          shot_file = os.environ.get("SHOT_FILE")
+
+          # Build a multipart/related email: HTML + inline image
+          msg = MIMEMultipart('related')
+          msg['Subject'] = f"[Site Screenshot] {url}"
+          msg['From'] = from_addr
+          msg['To'] = to_addr
+
+          # HTML part references the image by Content-ID
+          html = f"""
+          <html>
+            <body>
+              <p>Hi Darren,</p>
+              <p>Today's screenshot for <b>{url}</b>:</p>
+              <p><img src="cid:screenshot" style="max-width:100%; height:auto;"/></p>
+              <p>— GitHub Actions</p>
+            </body>
+          </html>
+          """
+          alt = MIMEMultipart('alternative')
+          alt.attach(MIMEText("Today's screenshot is embedded (use an HTML-capable client).", 'plain'))
+          alt.attach(MIMEText(html, 'html'))
+          msg.attach(alt)
+
+          # Attach image inline
+          with open(shot_file, 'rb') as f:
+              img = MIMEImage(f.read())
+          img.add_header('Content-ID', '<screenshot>')   # must be in angle brackets
+          img.add_header('Content-Disposition', 'inline', filename=os.path.basename(shot_file))
+          msg.attach(img)
+
+          # Send via SMTPS (SSL on 465) or STARTTLS if you're using 587
+          context = ssl.create_default_context()
+          if port == 465:
+              with smtplib.SMTP_SSL(server, port, context=context) as s:
+                  s.login(user, password)
+                  s.sendmail(from_addr, [to_addr], msg.as_string())
+          else:
+              with smtplib.SMTP(server, port) as s:
+                  s.starttls(context=context)
+                  s.login(user, password)
+                  s.sendmail(from_addr, [to_addr], msg.as_string())
+          print(f"Sent inline screenshot email to {to_addr} for {url} with file {shot_file}")
+          PY
