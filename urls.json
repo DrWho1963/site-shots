@@ -1,3 +1,16 @@
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      urls: ${{ steps.collect.outputs.urls }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: collect
+        env:
+          SHOT_URLS: ${{ secrets.SHOT_URLS }}
+        shell: bash
+        run: |
+          cat << 'EOF' > defaults.json
 [
   "https://www.mayspaving.com/",
   "https://prioritybus.com/",
@@ -17,3 +30,21 @@
   "http://systemsandcontrols.com/",
   "https://www.greenspage.com/"
 ]
+EOF
+          sudo apt-get update -y && sudo apt-get install -y jq
+          if [ -n "$SHOT_URLS" ]; then
+            # parse secret list first
+            python - << 'PY' > urls.json
+import os, json
+raw = os.environ.get("SHOT_URLS","")
+urls1 = [u.strip() for u in raw.split(",") if u.strip()]
+defaults = json.load(open("defaults.json"))
+# combine without duplication
+combined = urls1 + [u for u in defaults if u not in urls1]
+print(json.dumps(combined))
+PY
+          else
+            # no secret override: use defaults
+            cp defaults.json urls.json
+          fi
+          echo "urls=$(jq -c . urls.json)" >> "$GITHUB_OUTPUT"
