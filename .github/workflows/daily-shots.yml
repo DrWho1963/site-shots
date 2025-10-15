@@ -13,7 +13,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Simple: hardcode your list here. Change anytime.
       - id: collect
         run: |
           cat > urls.json <<'JSON'
@@ -55,7 +54,6 @@ jobs:
           python-version: "3.11"
 
       - name: Install Playwright + browsers
-        shell: bash
         run: |
           pip install playwright
           python -m playwright install --with-deps chromium
@@ -63,7 +61,6 @@ jobs:
       - name: Screenshot to JPEG
         env:
           SHOT_URLS: ${{ matrix.url }}   # one URL per job
-        shell: bash
         run: |
           set -e
           mkdir -p shots
@@ -71,7 +68,6 @@ jobs:
           shopt -s nullglob
           files=(shots/*.jpg)
           if [ ${#files[@]} -eq 0 ]; then
-            echo "No JPEG found. Skipping email."
             echo "SKIP_EMAIL=true" >> "$GITHUB_ENV"
           else
             echo "SHOT_FILE=${files[0]}" >> "$GITHUB_ENV"
@@ -89,7 +85,6 @@ jobs:
           TO_EMAIL: ${{ secrets.TO_EMAIL }}
           URL_UNDER_TEST: ${{ matrix.url }}
           SHOT_FILE: ${{ env.SHOT_FILE }}
-        shell: bash
         run: |
           python - <<'PY'
 import os, smtplib, ssl
@@ -138,4 +133,3 @@ else:
         s.sendmail(frm, [to], msg.as_string())
 print(f"Sent screenshot for {url} -> {to} ({shot})")
 PY
-
