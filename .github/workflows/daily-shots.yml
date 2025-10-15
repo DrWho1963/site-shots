@@ -1,9 +1,10 @@
-name: Daily Site Screenshots (Manual + 7AM Auto Run)
+name: Daily Site Screenshots (One Email per URL)
 
 on:
   workflow_dispatch:
   schedule:
-    - cron: "0 11 * * *"  # runs daily at 7AM Knoxville time (UTC-4)
+    - cron: "0 11 * * *"  # 7:00 AM Knoxville (UTC-5/UTC-4 DST)
+
 
   workflow_dispatch: {}
 
