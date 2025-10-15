@@ -3,10 +3,7 @@ name: Daily Site Screenshots (One Email per URL)
 on:
   workflow_dispatch:
   schedule:
-    - cron: "0 11 * * *"  # 7:00 AM Knoxville (UTC-5/UTC-4 DST)
-
-
-  workflow_dispatch: {}
+    - cron: "0 11 * * *"  # ~7:00 AM US Eastern (adjust if you want)
 
 jobs:
   prepare:
@@ -16,24 +13,24 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Build JSON array of URLs from secret SHOT_URLS (comma-separated) or urls.json
+      # Build JSON array of URLs from secret SHOT_URLS (comma-separated) or use urls.json in repo
       - id: collect
         env:
           SHOT_URLS: ${{ secrets.SHOT_URLS }}
+        shell: bash
         run: |
+          sudo apt-get update -y && sudo apt-get install -y jq
           if [ -n "$SHOT_URLS" ]; then
-            json=$(python - <<'PY'
+            # Write SHOT_URLS into urls.json as a proper JSON array
+            python - <<'PY' > urls.json
 import os, json
 raw = os.environ.get("SHOT_URLS","")
 urls = [u.strip() for u in raw.split(",") if u.strip()]
 print(json.dumps(urls))
 PY
-)
-            echo "urls=$json" >> "$GITHUB_OUTPUT"
-          else
-            sudo apt-get update -y && sudo apt-get install -y jq
-            echo "urls=$(jq -c . urls.json)" >> "$GITHUB_OUTPUT"
           fi
+          # Emit the JSON array from urls.json to the job output
+          echo "urls=$(jq -c . urls.json)" >> "$GITHUB_OUTPUT"
 
   shoot_and_email:
     needs: prepare
@@ -55,17 +52,18 @@ PY
           pip install playwright
           python -m playwright install --with-deps chromium
 
-      # Take ONE small JPEG screenshot for this URL
+      # Take ONE small JPEG screenshot for this URL (keeps email tiny)
       - name: Screenshot to JPEG
         env:
           SHOT_URLS: ${{ matrix.url }}
+        shell: bash
         run: |
           python scripts/daily_screenshot.py
           file="$(ls -1 shots/*.jpg | head -n1)"
           echo "SHOT_FILE=$file" >> "$GITHUB_ENV"
           echo "Using file: $file"
 
-      # Send email with image INLINE (CID)
+      # Send email with the image INLINE (CID)
       - name: Email inline JPEG
         env:
           SMTP_SERVER: ${{ secrets.SMTP_SERVER }}
@@ -76,6 +74,7 @@ PY
           TO_EMAIL: ${{ secrets.TO_EMAIL }}
           URL_UNDER_TEST: ${{ matrix.url }}
           SHOT_FILE: ${{ env.SHOT_FILE }}
+        shell: bash
         run: |
           python - <<'PY'
 import os, smtplib, ssl
@@ -106,7 +105,7 @@ html = f"""
 </body></html>
 """
 alt = MIMEMultipart('alternative')
-alt.attach(MIMEText("Inline screenshot attached (HTML).", 'plain'))
+alt.attach(MIMEText("Inline screenshot (HTML).", 'plain'))
 alt.attach(MIMEText(html, 'html'))
 msg.attach(alt)
 
