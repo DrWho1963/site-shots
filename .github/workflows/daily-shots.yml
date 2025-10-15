@@ -20,6 +20,7 @@ jobs:
           SHOT_URLS: ${{ secrets.SHOT_URLS }}
         shell: bash
         run: |
+          set -e
           sudo apt-get update -y && sudo apt-get install -y jq
           if [ -n "$SHOT_URLS" ]; then
             python - <<'PY' > urls.json
@@ -29,6 +30,7 @@ urls = [u.strip() for u in raw.split(",") if u.strip()]
 print(json.dumps(urls))
 PY
           fi
+          test -s urls.json || { echo "urls.json missing/empty. Provide secrets.SHOT_URLS or commit urls.json."; exit 1; }
           echo "urls=$(jq -c . urls.json)" >> "$GITHUB_OUTPUT"
 
   shoot_and_email:
@@ -51,27 +53,26 @@ PY
           pip install playwright
           python -m playwright install --with-deps chromium
 
-      # Take ONE small JPEG for this URL
       - name: Screenshot to JPEG
         env:
-          SHOT_URLS: ${{ matrix.url }}
+          SHOT_URLS: ${{ matrix.url }}   # daily_screenshot.py should read this
         shell: bash
         run: |
           set -e
+          mkdir -p shots
           python scripts/daily_screenshot.py
           shopt -s nullglob
-          files=(shots/*.jpg)
+          files=(shots/*.jpg shots/*.jpeg)  # accept .jpg or .jpeg
           if [ ${#files[@]} -eq 0 ]; then
-            echo "No screenshot produced; will skip email."
+            echo "No JPEG found in ./shots after script ran."
             echo "SKIP_EMAIL=true" >> "$GITHUB_ENV"
           else
             echo "SHOT_FILE=${files[0]}" >> "$GITHUB_ENV"
             echo "Using file: ${files[0]}"
           fi
 
-      # Send email with the image INLINE (CID) — only if we have a file
       - name: Email inline JPEG
-        if: env.SKIP_EMAIL != 'true'
+        if: ${{ env.SKIP_EMAIL != 'true' }}
         env:
           SMTP_SERVER: ${{ secrets.SMTP_SERVER }}
           SMTP_PORT: ${{ secrets.SMTP_PORT }}
@@ -89,14 +90,19 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.mime.image import MIMEImage
 
-server=os.environ["SMTP_SERVER"]
-port=int(os.environ["SMTP_PORT"])
-user=os.environ["SMTP_USERNAME"]
-pw=os.environ["SMTP_PASSWORD"]
-frm=os.environ["FROM_EMAIL"]
-to=os.environ["TO_EMAIL"]
-url=os.environ["URL_UNDER_TEST"]
-shot=os.environ["SHOT_FILE"]
+def need(k):
+    v=os.environ.get(k)
+    if not v: raise SystemExit(f"Missing required env: {k}")
+    return v
+
+server=need("SMTP_SERVER")
+port=int(need("SMTP_PORT"))
+user=need("SMTP_USERNAME")
+pw=need("SMTP_PASSWORD")
+frm=need("FROM_EMAIL")
+to=need("TO_EMAIL")
+url=need("URL_UNDER_TEST")
+shot=need("SHOT_FILE")
 
 msg=MIMEMultipart('related')
 msg['Subject']=f"[Site Screenshot] {url}"
@@ -104,7 +110,7 @@ msg['From']=frm
 msg['To']=to
 
 alt=MIMEMultipart('alternative')
-alt.attach(MIMEText("Inline screenshot (HTML).", "plain"))
+alt.attach(MIMEText(f"Inline screenshot for {url}.", "plain"))
 alt.attach(MIMEText(
     f"<p>Today's screenshot for <b>{url}</b>:</p>"
     f"<img src='cid:screenshot' style='max-width:100%;height:auto;'/>",
