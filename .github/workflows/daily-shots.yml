@@ -3,7 +3,7 @@ name: Daily Site Screenshots (One Email per URL)
 on:
   workflow_dispatch:
   schedule:
-    - cron: "0 11 * * *"  # ~7:00 AM US Eastern
+    - cron: "0 11 * * *"  # ~7:00 AM US Eastern (cron runs in UTC)
 
 jobs:
   prepare:
@@ -67,18 +67,17 @@ jobs:
       matrix:
         url: ${{ fromJSON(needs.prepare.outputs.urls) }}
 
-              - name: Install Playwright + browsers
-        run: |
-          pip install playwright
-          python -m playwright install --with-deps chromium
-
-
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+
+      - name: Install Playwright + browsers
+        run: |
+          pip install playwright
+          python -m playwright install --with-deps chromium
 
       - name: Screenshot to JPEG
         env:
@@ -97,7 +96,6 @@ jobs:
             echo "SHOT_FILE=${files[0]}" >> "$GITHUB_ENV"
             echo "Using file: ${files[0]}"
           fi
-
 
       - name: Email inline JPEG
         if: ${{ env.SKIP_EMAIL != 'true' }}
