@@ -1,166 +1,19 @@
-name: Daily Site Screenshots (One Email per URL)
-
-on:
-  workflow_dispatch:
-  schedule:
-    - cron: "0 11 * * *"  # ~7:00 AM US Eastern
-
-jobs:
-  prepare:
-    runs-on: ubuntu-latest
-    outputs:
-      urls: ${{ steps.collect.outputs.urls }}
-    steps:
-      - uses: actions/checkout@v4
-
-      - id: collect
-        env:
-          # Optional: comma-separated override via secret (takes priority)
-          SHOT_URLS: ${{ secrets.SHOT_URLS }}
-          # Default list (used when secret is empty; also merged, without dupes, when secret present)
-          DEFAULT_URLS: |
-            [
-              "https://www.mayspaving.com/",
-              "https://prioritybus.com/",
-              "https://naturescharmboutique.com/",
-              "https://www.darrenbgreen.com/",
-              "https://eastersurveying.land/",
-              "https://stumpcreeksausage.com/",
-              "https://coldrunnerslogistics.com/",
-              "https://www.oilfieldpatents.com/",
-              "https://www.energy-ip.com/",
-              "https://www.procraftwoodworks.com/",
-              "https://soultoearththerapies.com/",
-              "https://www.bradthetreeman.com/",
-              "https://bestitchedemb.com/",
-              "https://maxpenningtonseries.com/",
-              "https://darrenbgreen.com/",
-              "http://systemsandcontrols.com/",
-              "https://www.greenspage.com/"
-            ]
-        shell: bash
-        run: |
-          set -euo pipefail
-          sudo apt-get update -y && sudo apt-get install -y jq
-
-          # Build JSON array from secret (comma list) and merge with defaults (unique)
-          jq -cn --arg secret "${SHOT_URLS:-}" --argjson defaults "${DEFAULT_URLS}" '
-            # turn comma string into array (trim spaces, drop empties)
-            ( if ($secret|length)>0
-              then ($secret
-                    | split(",")
-                    | map(gsub("^\\s+|\\s+$";""))
-                    | map(select(length>0)))
-              else [] end ) as $s
-            # unique merge: secret first, then defaults not already present
-            | ($s + ( $defaults - $s ))' > urls.json
-
-          echo "Built URL list:"
-          cat urls.json
-
-          # Output for matrix (must be a single-line JSON string)
-          echo "urls=$(jq -c . urls.json)" >> "$GITHUB_OUTPUT"
-
-  shoot_and_email:
-    needs: prepare
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        url: ${{ fromJSON(needs.prepare.outputs.urls) }}
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
-      - name: Install Playwright + browsers
-        run: |
-          pip install playwright
-          python -m playwright install --with-deps chromium
-
-      - name: Screenshot to JPEG
-        env:
-          SHOT_URLS: ${{ matrix.url }}   # the script expects this (one URL per job)
-        shell: bash
-        run: |
-          set -e
-          mkdir -p shots
-          python scripts/daily_screenshot.py
-          shopt -s nullglob
-          files=(shots/*.jpg shots/*.jpeg)
-          if [ ${#files[@]} -eq 0 ]; then
-            echo "No JPEG found in ./shots after script ran."
-            echo "SKIP_EMAIL=true" >> "$GITHUB_ENV"
-          else
-            echo "SHOT_FILE=${files[0]}" >> "$GITHUB_ENV"
-            echo "Using file: ${files[0]}"
-          fi
-
-      - name: Email inline JPEG
-        if: ${{ env.SKIP_EMAIL != 'true' }}
-        env:
-          SMTP_SERVER: ${{ secrets.SMTP_SERVER }}
-          SMTP_PORT: ${{ secrets.SMTP_PORT }}
-          SMTP_USERNAME: ${{ secrets.SMTP_USERNAME }}
-          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
-          FROM_EMAIL: ${{ secrets.FROM_EMAIL }}
-          TO_EMAIL: ${{ secrets.TO_EMAIL }}
-          URL_UNDER_TEST: ${{ matrix.url }}
-          SHOT_FILE: ${{ env.SHOT_FILE }}
-        shell: bash
-        run: |
-          python - <<'PY'
-import os, smtplib, ssl
-from email.mime.multipart import MIMEMultipart
-from email.mime.text import MIMEText
-from email.mime.image import MIMEImage
-
-def need(k):
-    v=os.environ.get(k)
-    if not v: raise SystemExit(f"Missing required env: {k}")
-    return v
-
-server=need("SMTP_SERVER")
-port=int(need("SMTP_PORT"))
-user=need("SMTP_USERNAME")
-pw=need("SMTP_PASSWORD")
-frm=need("FROM_EMAIL")
-to=need("TO_EMAIL")
-url=need("URL_UNDER_TEST")
-shot=need("SHOT_FILE")
-
-msg=MIMEMultipart('related')
-msg['Subject']=f"[Site Screenshot] {url}"
-msg['From']=frm
-msg['To']=to
-
-alt=MIMEMultipart('alternative')
-alt.attach(MIMEText(f"Inline screenshot for {url}.", "plain"))
-alt.attach(MIMEText(
-    f"<p>Today's screenshot for <b>{url}</b>:</p>"
-    f"<img src='cid:screenshot' style='max-width:100%;height:auto;'/>",
-    "html"
-))
-msg.attach(alt)
-
-with open(shot, "rb") as f:
-    img=MIMEImage(f.read())
-img.add_header('Content-ID','<screenshot>')
-img.add_header('Content-Disposition','inline', filename=os.path.basename(shot))
-msg.attach(img)
-
-ctx=ssl.create_default_context()
-if port==465:
-    with smtplib.SMTP_SSL(server, port, context=ctx) as s:
-        s.login(user, pw)
-        s.sendmail(frm, [to], msg.as_string())
-else:
-    with smtplib.SMTP(server, port) as s:
-        s.starttls(context=ctx)
-        s.login(user, pw)
-        s.sendmail(frm, [to], msg.as_string())
-print(f"Sent inline screenshot for {url} -> {to} ({shot})")
-PY
+[
+  "https://www.mayspaving.com/",
+  "https://prioritybus.com/",
+  "https://naturescharmboutique.com/",
+  "https://www.darrenbgreen.com/",
+  "https://eastersurveying.land/",
+  "https://stumpcreeksausage.com/",
+  "https://coldrunnerslogistics.com/",
+  "https://www.oilfieldpatents.com/",
+  "https://www.energy-ip.com/",
+  "https://www.procraftwoodworks.com/",
+  "https://soultoearththerapies.com/",
+  "https://www.bradthetreeman.com/",
+  "https://bestitchedemb.com/",
+  "https://maxpenningtonseries.com/",
+  "https://darrenbgreen.com/",
+  "http://systemsandcontrols.com/",
+  "https://www.greenspage.com/"
+]
