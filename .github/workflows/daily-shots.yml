@@ -74,11 +74,6 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Install Playwright + browsers
-        run: |
-          pip install playwright
-          python -m playwright install --with-deps chromium
-
       - name: Screenshot to JPEG
         env:
           SHOT_URLS: ${{ matrix.url }}   # one URL per job
@@ -96,6 +91,7 @@ jobs:
             echo "SHOT_FILE=${files[0]}" >> "$GITHUB_ENV"
             echo "Using file: ${files[0]}"
           fi
+
 
       - name: Email inline JPEG
         if: ${{ env.SKIP_EMAIL != 'true' }}
