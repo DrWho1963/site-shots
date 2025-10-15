@@ -1,14 +1,34 @@
-name: Daily Site Screenshots (Email)
+name: Daily Site Screenshots (One email per URL)
 
 on:
   schedule:
-    - cron: "5 11 * * *"   # 11:05 UTC ≈ 7:05am New York; adjust if you want
+    - cron: "5 11 * * *"
   workflow_dispatch: {}
 
 jobs:
-  shoot-and-email:
+  prepare:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    outputs:
+      urls: ${{ steps.collect.outputs.urls }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: collect
+        run: |
+          if [ -n "${{ secrets.SHOT_URLS }}" ]; then
+            RAW="${{ secrets.SHOT_URLS }}"
+            echo "urls=$(printf '%s' "$RAW" | awk -v RS=, 'NF{gsub(/^[ \t]+|[ \t]+$/,""); printf "%s\"%s\"", (NR==1?"[":","), $0} END{print "]"}')" >> $GITHUB_OUTPUT
+          else
+            sudo apt-get update && sudo apt-get install -y jq
+            echo "urls=$(jq -c . urls.json)" >> $GITHUB_OUTPUT
+          fi
+
+  shoot_and_email:
+    needs: prepare
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        url: ${{ fromJSON(needs.prepare.outputs.urls) }}
     steps:
       - uses: actions/checkout@v4
 
@@ -21,30 +41,17 @@ jobs:
           pip install playwright
           python -m playwright install --with-deps chromium
 
-      - name: Run screenshots
+      - name: Screenshot one URL to JPEG
         env:
-          SHOT_URLS: ${{ secrets.SHOT_URLS }}   # optional; otherwise uses urls.json
+          SHOT_URLS: ${{ matrix.url }}
         run: |
           python scripts/daily_screenshot.py
+          # pick the single file we just created and expose it as SHOT_FILE
+          f=$(ls -1 shots/*.jpg | head -n1)
+          echo "SHOT_FILE=$f" >> $GITHUB_ENV
+          echo "Using file: $f"
 
-      - name: Convert PNG -> JPG (quality 80)
-        run: |
-          sudo apt-get update && sudo apt-get install -y imagemagick
-          mkdir -p shots_jpg
-          mogrify -format jpg -quality 80 -path shots_jpg shots/*.png
-          ls -lh shots_jpg || true
-
-      - name: Upload screenshots as artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: screenshots-${{ github.run_id }}
-          path: |
-            shots/*.png
-            shots_jpg/*.jpg
-          if-no-files-found: warn
-          retention-days: 14
-
-      - name: Send email with attachments
+      - name: Send email with this one attachment
         uses: dawidd6/action-send-mail@v3
         with:
           server_address: ${{ secrets.SMTP_SERVER }}
@@ -52,17 +59,11 @@ jobs:
           username: ${{ secrets.SMTP_USERNAME }}
           password: ${{ secrets.SMTP_PASSWORD }}
           secure: true
-          subject: "Daily Screenshots - ${{ github.repository }} - ${{ github.run_id }}"
           from: ${{ secrets.FROM_EMAIL }}
           to: ${{ secrets.TO_EMAIL }}
-          attachments: |
-            shots_jpg/*.jpg
-            shots/*.png
+          subject: "[Site Screenshot] ${{ matrix.url }} - ${{ github.run_id }}"
           html_body: |
             <p>Hi Darren,</p>
-            <p>Attached are today’s screenshots.</p>
-            <ul>
-              <li>Run ID: ${{ github.run_id }}</li>
-              <li>Time (UTC): ${{ github.run_started_at }}</li>
-            </ul>
-            <p>— GitHub Actions</p>
+            <p>Today's screenshot for <b>${{ matrix.url }}</b> is attached.</p>
+            <p>Run: ${{ github.run_id }} • UTC: ${{ github.run_started_at }}</p>
+          attachments: ${{ env.SHOT_FILE }}
