@@ -19,8 +19,8 @@ jobs:
           python -m playwright install --with-deps chromium
 
       - name: Screenshot Mays Paving
+        id: shot
         env:
-          # Your script will create: shots/www_mayspaving_com__YYYY-MM-DD_HHMMSS-UTC.jpg
           SHOT_URLS: "https://www.mayspaving.com/"
         shell: bash
         run: |
@@ -32,14 +32,14 @@ jobs:
           files=(shots/*.jpg shots/*.jpeg)
           if [ ${#files[@]} -eq 0 ]; then
             echo "No screenshot found, skipping email."
-            echo "SKIP_EMAIL=true" >> "$GITHUB_ENV"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
           else
-            echo "SHOT_FILE=${files[0]}" >> "$GITHUB_ENV"
+            echo "file=${files[0]}" >> "$GITHUB_OUTPUT"
             echo "Saved: ${files[0]}"
           fi
 
       - name: Email Screenshot
-        if: ${{ env.SKIP_EMAIL != 'true' }}
+        if: ${{ steps.shot.outputs.skip != 'true' && steps.shot.outputs.file != '' }}
         env:
           SMTP_SERVER: ${{ secrets.SMTP_SERVER }}
           SMTP_PORT: ${{ secrets.SMTP_PORT }}
@@ -48,29 +48,38 @@ jobs:
           FROM_EMAIL: ${{ secrets.FROM_EMAIL }}
           TO_EMAIL: ${{ secrets.TO_EMAIL }}
           URL_UNDER_TEST: "https://www.mayspaving.com/"
-          SHOT_FILE: ${{ env.SHOT_FILE }}
+          SHOT_FILE: ${{ steps.shot.outputs.file }}
         shell: bash
         run: |
           python - <<'PY'
-import os, smtplib, ssl
+import os
+import smtplib
+import ssl
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.mime.image import MIMEImage
 
-server=os.environ["SMTP_SERVER"]
-port=int(os.environ["SMTP_PORT"])
-user=os.environ["SMTP_USERNAME"]
-pw=os.environ["SMTP_PASSWORD"]
-frm=os.environ["FROM_EMAIL"]
-to=os.environ["TO_EMAIL"]
-url=os.environ["URL_UNDER_TEST"]
-shot=os.environ["SHOT_FILE"]
+# Get environment variables
+server = os.environ["SMTP_SERVER"]
+port = int(os.environ["SMTP_PORT"])
+user = os.environ["SMTP_USERNAME"]
+pw = os.environ["SMTP_PASSWORD"]
+frm = os.environ["FROM_EMAIL"]
+to = os.environ["TO_EMAIL"]
+url = os.environ["URL_UNDER_TEST"]
+shot = os.environ.get("SHOT_FILE")
 
+# Validate screenshot file exists
+if not shot or not os.path.exists(shot):
+    raise SystemExit("SHOT_FILE missing or not found; nothing to send.")
+
+# Create email message
 msg = MIMEMultipart("related")
 msg["Subject"] = f"[Screenshot Test] {url}"
 msg["From"] = frm
 msg["To"] = to
 
+# Create alternative part for plain text and HTML
 alt = MIMEMultipart("alternative")
 alt.attach(MIMEText(f"Screenshot for {url}", "plain"))
 alt.attach(MIMEText(
@@ -80,12 +89,14 @@ alt.attach(MIMEText(
 ))
 msg.attach(alt)
 
+# Attach screenshot image
 with open(shot, "rb") as f:
     img = MIMEImage(f.read())
 img.add_header("Content-ID", "<screenshot>")
 img.add_header("Content-Disposition", "inline", filename=os.path.basename(shot))
 msg.attach(img)
 
+# Send email
 ctx = ssl.create_default_context()
 if port == 465:
     with smtplib.SMTP_SSL(server, port, context=ctx) as s:
