@@ -37,7 +37,7 @@ jobs:
           ]
           JSON
           # IMPORTANT: make it one line for fromJSON()
-          echo "urls=$(jq -c . urls.json)" >> "$GITHUB_OUTPUT"
+          echo "urls=$(tr -d '\n' < urls.json)" >> "$GITHUB_OUTPUT"
 
   shoot_and_email:
     needs: prepare
