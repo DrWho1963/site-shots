@@ -1,57 +1,11 @@
-name: Daily Site Screenshots (One Email per URL)
+name: Daily Screenshot Test (Mays Paving)
 
 on:
   workflow_dispatch:
-  schedule:
-    - cron: "0 11 * * *"  # 7:00 AM US Eastern (runs in UTC)
 
 jobs:
-  prepare:
+  single_test:
     runs-on: ubuntu-latest
-    outputs:
-      urls: ${{ steps.collect.outputs.urls }}
-    steps:
-      - uses: actions/checkout@v4
-
-      - id: collect
-        shell: bash
-        run: |
-          # Build URL list with Python and emit a single-line JSON to $GITHUB_OUTPUT
-          python - <<'PY' >> "$GITHUB_OUTPUT"
-import json
-urls = [
-  "https://www.mayspaving.com/",
-  "https://prioritybus.com/",
-  "https://naturescharmboutique.com/",
-  "https://www.darrenbgreen.com/",
-  "https://eastersurveying.land/",
-  "https://stumpcreeksausage.com/",
-  "https://coldrunnerslogistics.com/",
-  "https://www.oilfieldpatents.com/",
-  "https://www.energy-ip.com/",
-  "https://www.procraftwoodworks.com/",
-  "https://soultoearththerapies.com/",
-  "https://www.bradthetreeman.com/",
-  "https://bestitchedemb.com/",
-  "https://maxpenningtonseries.com/",
-  "https://darrenbgreen.com/",
-  "http://systemsandcontrols.com/",
-  "https://www.greenspage.com/"
-]
-# Write pretty file for your script fallback (not strictly needed, but handy)
-open("urls.json","w").write(json.dumps(urls, indent=2))
-# IMPORTANT: GitHub matrix needs a compact single-line JSON string
-print("urls=" + json.dumps(urls, separators=(',',':')))
-PY
-
-  shoot_and_email:
-    needs: prepare
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        url: ${{ fromJSON(needs.prepare.outputs.urls) }}
-
     steps:
       - uses: actions/checkout@v4
 
@@ -60,31 +14,31 @@ PY
           python-version: "3.11"
 
       - name: Install Playwright + browsers
-        shell: bash
         run: |
           pip install playwright
           python -m playwright install --with-deps chromium
 
-      - name: Screenshot to JPEG
+      - name: Screenshot Mays Paving
         env:
-          SHOT_URLS: ${{ matrix.url }}   # one URL per job
+          # Your script will create: shots/www_mayspaving_com__YYYY-MM-DD_HHMMSS-UTC.jpg
+          SHOT_URLS: "https://www.mayspaving.com/"
         shell: bash
         run: |
           set -e
-          echo "URL under test: $SHOT_URLS"
           mkdir -p shots
+          echo "Taking screenshot of $SHOT_URLS"
           python scripts/daily_screenshot.py
           shopt -s nullglob
           files=(shots/*.jpg shots/*.jpeg)
           if [ ${#files[@]} -eq 0 ]; then
-            echo "No JPEG found. Skipping email."
+            echo "No screenshot found, skipping email."
             echo "SKIP_EMAIL=true" >> "$GITHUB_ENV"
           else
             echo "SHOT_FILE=${files[0]}" >> "$GITHUB_ENV"
-            echo "Using file: ${files[0]}"
+            echo "Saved: ${files[0]}"
           fi
 
-      - name: Email inline JPEG
+      - name: Email Screenshot
         if: ${{ env.SKIP_EMAIL != 'true' }}
         env:
           SMTP_SERVER: ${{ secrets.SMTP_SERVER }}
@@ -93,7 +47,7 @@ PY
           SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
           FROM_EMAIL: ${{ secrets.FROM_EMAIL }}
           TO_EMAIL: ${{ secrets.TO_EMAIL }}
-          URL_UNDER_TEST: ${{ matrix.url }}
+          URL_UNDER_TEST: "https://www.mayspaving.com/"
           SHOT_FILE: ${{ env.SHOT_FILE }}
         shell: bash
         run: |
@@ -112,27 +66,27 @@ to=os.environ["TO_EMAIL"]
 url=os.environ["URL_UNDER_TEST"]
 shot=os.environ["SHOT_FILE"]
 
-msg=MIMEMultipart("related")
-msg["Subject"]=f"[Site Screenshot] {url}"
-msg["From"]=frm
-msg["To"]=to
+msg = MIMEMultipart("related")
+msg["Subject"] = f"[Screenshot Test] {url}"
+msg["From"] = frm
+msg["To"] = to
 
-alt=MIMEMultipart("alternative")
-alt.attach(MIMEText(f"Inline screenshot for {url}.", "plain"))
+alt = MIMEMultipart("alternative")
+alt.attach(MIMEText(f"Screenshot for {url}", "plain"))
 alt.attach(MIMEText(
-    f"<p>Today's screenshot for <b>{url}</b>:</p>"
+    f"<p>Screenshot for <b>{url}</b>:</p>"
     f"<img src='cid:screenshot' style='max-width:100%;height:auto;'>",
     "html"
 ))
 msg.attach(alt)
 
 with open(shot, "rb") as f:
-    img=MIMEImage(f.read())
+    img = MIMEImage(f.read())
 img.add_header("Content-ID", "<screenshot>")
 img.add_header("Content-Disposition", "inline", filename=os.path.basename(shot))
 msg.attach(img)
 
-ctx=ssl.create_default_context()
+ctx = ssl.create_default_context()
 if port == 465:
     with smtplib.SMTP_SSL(server, port, context=ctx) as s:
         s.login(user, pw)
@@ -142,5 +96,6 @@ else:
         s.starttls(context=ctx)
         s.login(user, pw)
         s.sendmail(frm, [to], msg.as_string())
-print(f"Sent screenshot for {url} -> {to} ({shot})")
+
+print(f"Sent screenshot for {url} → {to} ({shot})")
 PY
